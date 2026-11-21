@@ -17,6 +17,8 @@ const { db, request } = app;
 const { createGoogleSignInHandler } = await import('../src/lib/auth-google.ts');
 const me = await import('../src/app/api/auth/me/route.ts');
 const adminListings = await import('../src/app/api/admin/listings/route.ts');
+const onboarding = await import('../src/app/api/auth/onboarding/route.ts');
+const logout = await import('../src/app/api/auth/logout/route.ts');
 
 after(() => app.cleanup());
 
@@ -185,6 +187,59 @@ describe('Accepted sign-ins derive identity from the token only', () => {
     const second = await signIn({ idToken: mintToken(claimsFor()) }, { token: first.token });
     assert.notEqual(first.token, second.token);
     assert.equal((await read(await me.GET(request('GET', '/api/auth/me', { token: first.token })))).json.user, null);
+  });
+});
+
+describe('Google sign-in lifecycle', () => {
+  // Its own client IP, so the per-IP auth rate limit (exercised by the tests above) does not interfere.
+  const fromNet = (body) => signIn(body, { headers: { 'x-forwarded-for': '203.0.113.10' } });
+  const whoAmI = async (token) => (await read(await me.GET(request('GET', '/api/auth/me', { token })))).json.user;
+
+  it('new driver: onboarding required, then completes; returning sign-in reuses the account', async () => {
+    const first = await fromNet({ idToken: mintToken(claimsFor({ sub: 'uid-dan', email: 'dan@example.com' })), intent: 'driver' });
+    assert.equal(first.status, 200);
+    assert.equal(first.json.onboardingRequired, true);
+    const done = await read(await onboarding.POST(request('POST', '/api/auth/onboarding', {
+      token: first.token, body: { fullName: 'Dan Driver', phone: '9876543210', acceptTerms: true },
+    })));
+    assert.equal(done.status, 200, JSON.stringify(done.json));
+    assert.equal(done.json.user.phone && done.json.user.roles.includes('DRIVER'), true);
+    const users = await userCount();
+    const again = await fromNet({ idToken: mintToken(claimsFor({ sub: 'uid-dan', email: 'dan@example.com' })) });
+    assert.equal(again.status, 200);
+    assert.equal(again.json.user.id, first.json.user.id);
+    assert.equal(await userCount(), users, 'a returning user is not duplicated');
+  });
+
+  it('new host: provider role and onboarding with a host type', async () => {
+    const res = await fromNet({ idToken: mintToken(claimsFor({ sub: 'uid-hana', email: 'hana@example.com' })), intent: 'provider' });
+    assert.equal(res.status, 200);
+    assert.ok(res.json.user.roles.includes('PROVIDER'));
+    const done = await onboarding.POST(request('POST', '/api/auth/onboarding', {
+      token: res.token, body: { fullName: 'Hana Host', providerType: 'OWNER', acceptTerms: true },
+    }));
+    assert.equal(done.status, 200);
+  });
+
+  it('an allowlisted Firebase UID is an administrator; others are refused admin routes', async () => {
+    const admin = await fromNet({ idToken: mintToken(claimsFor({ sub: ADMIN_UID, email: 'ops@example.com' })) });
+    assert.equal(admin.status, 200);
+    assert.equal(admin.json.isMasterAdmin, true);
+    assert.ok(admin.json.user.roles.includes('ADMIN'));
+    assert.equal((await adminListings.GET(request('GET', '/api/admin/listings', { token: admin.token }))).status, 200);
+    const user = await fromNet({ idToken: mintToken(claimsFor({ sub: 'uid-not-admin', email: 'ops2@example.com' })) });
+    assert.equal(user.json.isMasterAdmin, false);
+    assert.equal((await adminListings.GET(request('GET', '/api/admin/listings', { token: user.token }))).status, 403);
+  });
+
+  it('logout revokes the session; signing in again issues a fresh one', async () => {
+    const first = await fromNet({ idToken: mintToken(claimsFor()) });
+    assert.equal((await whoAmI(first.token)).email, 'alice@example.com');
+    assert.equal((await logout.POST(request('POST', '/api/auth/logout', { token: first.token }))).status, 200);
+    assert.equal(await whoAmI(first.token), null);
+    const second = await fromNet({ idToken: mintToken(claimsFor()) });
+    assert.equal(second.status, 200);
+    assert.equal((await whoAmI(second.token)).email, 'alice@example.com');
   });
 });
 

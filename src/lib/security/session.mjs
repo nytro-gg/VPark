@@ -58,7 +58,8 @@ export function resolveSessionSecret(env = process.env) {
     }
     return { secret: raw, source: 'env' };
   }
-  if (env.NODE_ENV === 'production' && !env.VERCEL && env.VPARK_ALLOW_LOCAL_FALLBACK !== 'true') {
+  // Never an ephemeral per-instance secret in production (incl. Vercel): sessions would not validate across instances.
+  if (env.NODE_ENV === 'production') {
     return { secret: null, error: 'SESSION_SECRET is not configured.' };
   }
   const g = globalThis;

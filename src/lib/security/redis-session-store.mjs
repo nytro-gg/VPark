@@ -70,7 +70,7 @@ export function resolveSessionBackend(env = process.env) {
   }
   const data = resolveDataBackend(env);
   if (data.kind === 'postgres') return { kind: 'database' };
-  if (env.NODE_ENV === 'production' && !env.VERCEL && env.VPARK_ALLOW_LOCAL_FALLBACK !== 'true') {
+  if (env.NODE_ENV === 'production') {
     return {
       kind: null,
       error:

@@ -47,6 +47,8 @@ describe('Session backend selection', () => {
     const r = resolveSessionBackend({ NODE_ENV: 'production' });
     assert.equal(r.kind, null);
     assert.match(r.error, /No durable session store/);
+    // Not even on Vercel, where /tmp is per-instance and wiped on cold start.
+    assert.equal(resolveSessionBackend({ NODE_ENV: 'production', VERCEL: '1' }).kind, null);
   });
 
   it('production with Redis REST credentials uses Redis (Upstash or Vercel KV variable names)', () => {
@@ -70,8 +72,10 @@ describe('Session backend selection', () => {
   });
 
   it('a production app with no durable store refuses sessions and writes nothing locally', async () => {
+    const { createGoogleSignInHandler } = await import('../src/lib/auth-google.ts');
     const saved = { ...process.env };
     process.env.NODE_ENV = 'production';
+    process.env.VERCEL = '1';
     delete process.env.UPSTASH_REDIS_REST_URL;
     delete process.env.UPSTASH_REDIS_REST_TOKEN;
     const errors = [];
@@ -79,7 +83,14 @@ describe('Session backend selection', () => {
     console.error = (msg) => errors.push(String(msg));
     try {
       const before = localSessionsOnDisk(app.dataDir).length;
+      let verifierCalled = false;
+      const handler = createGoogleSignInHandler({ verifier: async () => ((verifierCalled = true), {}) });
+      const res = await handler(app.request('POST', '/api/auth/google', { body: { idToken: 'a.b.c' } }));
+      assert.equal(res.status, 503);
+      assert.equal(verifierCalled, false, 'no identity work happens without a session store');
+      assert.equal(res.cookies.get('__Host-vpark_session'), undefined);
       assert.equal(localSessionsOnDisk(app.dataDir).length, before);
+      assert.ok(errors.some((e) => e.includes('No durable session store')), 'a clear configuration error is logged');
 
       // Existing session cookies are not honoured either.
       const me = await import('../src/app/api/auth/me/route.ts');

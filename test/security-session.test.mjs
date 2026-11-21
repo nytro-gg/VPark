@@ -86,6 +86,9 @@ describe('Session manager (unit)', () => {
 
   it('fails closed when SESSION_SECRET is missing or weak in production', () => {
     assert.equal(resolveSessionSecret({ NODE_ENV: 'production' }).secret, null);
+    // Vercel is production too: a per-instance ephemeral secret would break sessions across instances.
+    assert.equal(resolveSessionSecret({ NODE_ENV: 'production', VERCEL: '1' }).secret, null);
+    assert.equal(resolveSessionSecret({ NODE_ENV: 'production', VPARK_ALLOW_LOCAL_FALLBACK: 'true' }).secret, null);
     assert.equal(resolveSessionSecret({ NODE_ENV: 'production', SESSION_SECRET: 'short' }).secret, null);
     assert.equal(resolveSessionSecret({ NODE_ENV: 'development', SESSION_SECRET: 'short' }).secret, null);
     assert.ok(resolveSessionSecret({ NODE_ENV: 'production', SESSION_SECRET: SECRET }).secret);
