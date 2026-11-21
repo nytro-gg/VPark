@@ -268,4 +268,12 @@ describe('theme styles', () => {
     assert.match(toggle, /window\.setTimeout\(finish, SAFETY_MS\)/);
     assert.match(toggle, /flushSync/);
   });
+
+  it('cancels its fill:both reveal animations on cleanup so they never stack under the next toggle', () => {
+    const toggle = fs.readFileSync(new URL('../src/components/nav/ThemeToggle.tsx', import.meta.url), 'utf8');
+    const cleanup = toggle.slice(toggle.indexOf('const cleanup = () => {'), toggle.indexOf('cleanupRef.current = cleanup;'));
+    assert.match(cleanup, /anims\.forEach\(\(a\) => a\.cancel\(\)\)/);
+    assert.match(toggle, /anims = \[\s*root\.animate\([\s\S]*root\.animate\(/, 'both Animation objects are retained');
+    assert.match(toggle, /if \(cleanupRef\.current !== cleanup\) return;/, 'no animation starts after cleanup ran');
+  });
 });
